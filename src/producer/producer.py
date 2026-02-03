@@ -1,18 +1,22 @@
 import time
 import json
 import os
+import random
 from kafka import KafkaProducer
 from kafka.errors import NoBrokersAvailable
-from src.producer.data_factory import create_raw_data
+
+# 작성하신 데이터 생성 로직이 들어있는 파일에서 함수를 가져옵니다.
+# 만약 한 파일에 합치려면 아래에 build_order_json 함수 등을 위치시키면 됩니다.
+from src.producer.data_factory import build_order_json, FULL_PRODUCT_CATALOG, STATUS_OPTS
 
 # ---------------------------------------------------------
-# ⚙️ 카프카 접속 설정
+# ⚙️ 카프카 접속 및 토픽 설정
 # ---------------------------------------------------------
 BOOTSTRAP_SERVERS = os.getenv('BOOTSTRAP_SERVERS', 'localhost:9092')
-TOPIC_NAME = 'event'  # 약속한 토픽 이름
+TOPIC_NAME = 'event'
 
 def create_producer():
-    """카프카 연결 시도 (무한 재시도 로직)"""
+    """카프카 브로커 연결 시도 (연결될 때까지 재시도)"""
     producer = None
     print(f"📡 카프카 브로커 연결 시도 중... ({BOOTSTRAP_SERVERS})")
     
@@ -21,7 +25,10 @@ def create_producer():
             producer = KafkaProducer(
                 bootstrap_servers=[BOOTSTRAP_SERVERS],
                 # JSON 직렬화 & 한글 깨짐 방지
-                value_serializer=lambda x: json.dumps(x, ensure_ascii=False).encode('utf-8')
+                value_serializer=lambda x: json.dumps(x, ensure_ascii=False).encode('utf-8'),
+                # 대량 전송 안정성을 위한 설정
+                acks=1,
+                retries=5
             )
             print("✅ 카프카 연결 성공!")
         except NoBrokersAvailable:
@@ -29,54 +36,83 @@ def create_producer():
             time.sleep(3)
     return producer
 
-def check_is_trap(data):
-    """
-    (단순 로그용) 전송되는 데이터가 함정인지 확인
-    * 실제 로직 처리는 Consumer가 하지만, 여기선 로그 출력을 위해 잠시 확인만 함
-    """
-    if data['product_id'] == 'TEST-002':
-        return True, "재고부족(TEST-002)"
-    if data['customer_id'] == 'USER-9999':
-        return True, "사기의심(USER-9999)"
-    if len(str(data['address'])) < 5 or "?" in str(data['address']):
-        return True, "주소오류"
-    return False, ""
-
 # ---------------------------------------------------------
 # 🚀 메인 실행부
 # ---------------------------------------------------------
 if __name__ == "__main__":
     producer = create_producer()
-    print(f"🚀 [프로듀서] '{TOPIC_NAME}' 토픽으로 Raw 데이터 전송 시작...\n")
+    print(f"🚀 [프로듀서] '{TOPIC_NAME}' 토픽으로 복합 시나리오 데이터 전송 시작...\n")
 
     try:
         while True:
-            # 1. 데이터 생성 (함정 포함된 Raw Data)
-            data = create_raw_data()
-            
-            # 2. Kafka 전송 (묻지도 따지지도 않고 그냥 보냄)
-            producer.send(TOPIC_NAME, value=data)
-            producer.flush() 
-            
-            # 3. 로그 출력 (개발자가 알아보기 쉽게 꾸밈)
-            status = data['current_status']
-            product = data['product_name']
-            
-            # 함정 여부 확인 (로그용)
-            is_trap, trap_reason = check_is_trap(data)
+            dice = random.random()
+            batch = []
+            scenario_name = ""
 
-            if is_trap:
-                # 💣 함정 데이터는 눈에 띄게 출력
-                print(f"💣 [전송] {status} | {product}")
-                print(f"   └─ ⚠️ 함정 발동: {trap_reason} (Consumer가 잡아야 함!)")
-            else:
-                # ✅ 정상 데이터
-                print(f"✅ [전송] {status} | {product}")
+            # -------------------------------------------------------
+            # 🎲 시나리오 선택 로직 (작성하신 코드 반영)
+            # -------------------------------------------------------
             
-            # 4. 속도 조절
-            time.sleep(0.5)
+            # 1️⃣ 시나리오: 다수 유저의 인기 상품 폭주 (10%)
+            if dice < 0.10:
+                hot_prod = random.choice(FULL_PRODUCT_CATALOG)
+                burst_size = random.randint(10, 20)
+                scenario_name = f"🔥 [BURST] {hot_prod['name']} ({burst_size}건)"
+                for _ in range(burst_size):
+                    batch.append((build_order_json(prod=hot_prod, status_idx=0), 0.02))
+
+            # 2️⃣ 시나리오: 특정 유저의 어뷰징/도배 (5%)
+            elif dice < 0.15:
+                abuser_id = f"ABUSER_{random.randint(10, 99)}"
+                abuse_prod = random.choice(FULL_PRODUCT_CATALOG)
+                scenario_name = f"🚨 [ABUSE] {abuser_id} 연사"
+                for _ in range(6):
+                    batch.append((build_order_json(c_id=abuser_id, prod=abuse_prod, status_idx=0), 0.04))
+
+            # 3️⃣ 시나리오: 전체 상품 중 랜덤 재고 부족 유발 (10%)
+            elif dice < 0.25:
+                stock_target = random.choice(FULL_PRODUCT_CATALOG)
+                scenario_name = f"📦 [STOCK_CHECK] {stock_target['id']}"
+                batch.append((build_order_json(prod=stock_target, status_idx=0), 0))
+
+            # 4️⃣ 시나리오: 주소 오염 데이터 (5%)
+            elif dice < 0.30:
+                bad_addr = random.choice(["???", "Unknown", "123", "Seoul"])
+                scenario_name = f"🏠 [BAD_ADDR] {bad_addr}"
+                batch.append((build_order_json(addr=bad_addr, status_idx=0), 0))
+
+            # 5️⃣ 평시: 정상 주문 (70%)
+            else:
+                order = build_order_json()
+                scenario_name = f"✅ [NORMAL] {order['current_status']}"
+                batch.append((order, 0))
+
+            # -------------------------------------------------------
+            # 📦 Kafka 전송 및 로그 출력
+            # -------------------------------------------------------
+            if len(batch) > 1:
+                print(f"{scenario_name} 시나리오 전송 시작...")
+
+            for i, (msg, interval) in enumerate(batch):
+                producer.send(TOPIC_NAME, value=msg)
+                
+                # 로그 출력 (단건 주문일 때만 상세 출력, 버스트는 요약)
+                if len(batch) == 1:
+                    print(f"{scenario_name} | {msg['customer_id']} | {msg['product_name']}")
+                
+                # 버스트 모드일 때의 미세 간격 조절 (0.02초 등)
+                if interval > 0:
+                    time.sleep(interval)
+
+            producer.flush() # 배송 완료 보장
+            
+            if len(batch) > 1:
+                print(f"   └─ {len(batch)}건 전송 완료.")
+
+            # 시나리오 사이의 기본 대기 시간 (0.5초 ~ 1.5초)
+            time.sleep(random.uniform(0.5, 1.5))
 
     except KeyboardInterrupt:
-        print("\n🛑 전송을 중단합니다.")
+        print("\n🛑 프로듀서를 종료합니다.")
         if producer:
             producer.close()
