@@ -2,11 +2,14 @@ import random
 import string
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from faker import Faker
 
 # 한국어 더미 데이터 생성기 초기화
 fake = Faker('ko_KR')
+
+
+KST = timezone(timedelta(hours=9))
 
 class OrderGenerator:
     def __init__(self):
@@ -74,7 +77,7 @@ class OrderGenerator:
     def _base_data(self, user_id=None, product_id=None):
         """단일 주문 데이터 생성 (핵심 로직)"""
         p_id = product_id if product_id else random.choice(self.product_ids)
-        
+        occurred_at_kst = datetime.now(KST).isoformat()
         # 💡 이미지의 7가지 상태 중 하나를 랜덤 선택
         random_status = random.choice(list(self.status_stage_map.keys()))
         # 💡 선택된 상태에 어울리는 단계를 자동으로 매핑
@@ -92,7 +95,7 @@ class OrderGenerator:
             "current_stage": corresponding_stage,
             
             "last_event_type": "ORDER_CREATED",
-            "last_occurred_at": datetime.now().isoformat()
+            "last_occurred_at": occurred_at_kst
         }
 
     # ---------------------------------------------------------
