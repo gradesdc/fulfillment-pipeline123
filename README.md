@@ -9,13 +9,13 @@ Consumer에서 **검증·이상탐지 → HOLD 격리**, **Slack 알림**, **Pos
 ## 목차
 - [프로젝트 개요](#프로젝트-개요)
 - [핵심 기능](#핵심-기능)
+- [폴더 구조](#폴더-구조)
 - [아키텍처](#아키텍처)
 - [빠른 시작](#빠른-시작)
 - [환경변수(.env)](#환경변수env)
 - [대시보드 화면](#대시보드-화면)
 - [주요 데이터(테이블) 개요](#주요-데이터테이블-개요)
 - [API 개요](#api-개요)
-- [폴더 구조](#폴더-구조)
 - [트러블슈팅](#트러블슈팅)
 
 ---
@@ -60,120 +60,6 @@ Consumer에서 **검증·이상탐지 → HOLD 격리**, **Slack 알림**, **Pos
 - Orders: 주문 리스트/필터/상세
 - Events: 이벤트 리스트/필터
 - Alerts: 알림 리스트 + ACK/RESOLVE/RETRY
-
----
-
-## 아키텍처
-
-```mermaid
-flowchart LR
-  A[Producer<br/>주문/이벤트 생성] --> B[(Kafka)]
-  B --> C[Consumer<br/>검증·이상탐지]
-  C -->|정상| D[(PostgreSQL<br/>orders/events)]
-  C -->|이상 발생| H[HOLD 처리<br/>hold_reason_code 저장]
-  C --> S[Slack 알림]
-  D --> R[metrics_worker<br/>30분 롤업 집계]
-  R --> MW[(PostgreSQL<br/>metrics_window)]
-  MW --> W[FastAPI Web/API]
-  D --> W
-  W --> UI[Dashboard (HTML/CSS/JS)]
-```
-
----
-
-## 빠른 시작
-
-> 아래는 **Docker Compose 기준**입니다.
-
-### 1) 레포 클론
-```bash
-git clone https://github.com/kangminjong/fulfillment-pipeline.git
-cd fulfillment-pipeline
-```
-
-### 2) 환경변수 파일 준비
-```bash
-cp .env.example .env
-```
-
-### 3) 컨테이너 실행
-```bash
-docker compose up -d --build
-docker compose logs -f
-```
-
-### 4) 접속
-- 대시보드(예시): `http://localhost:8000`  
-  ※ 실제 포트는 `docker-compose.yml` 포트 매핑을 기준으로 확인하세요.
-
----
-
-## 환경변수(.env)
-
-`.env.example`를 복사해서 `.env`를 만들고 값만 채우면 됩니다.
-
-예시(프로젝트 설정에 맞게 조정):
-```dotenv
-# PostgreSQL
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=fulfillment
-DB_USER=user
-DB_PASSWORD=user
-
-# Kafka
-KAFKA_BOOTSTRAP_SERVERS=localhost:9092
-KAFKA_TOPIC=event
-KAFKA_GROUP_ID=risk-management-group
-
-# Slack
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXXX/XXXX/XXXX
-
-# App
-APP_TZ=Asia/Seoul
-```
-
----
-
-## 대시보드 화면
-
-- **Dashboard**
-  - KPI(주문/이벤트/알림/지연) 요약
-  - 시계열 차트(12h/24h/7d/30d 프리셋)
-  - 최근 주문/최근 알림 테이블
-- **Orders**
-  - 상태/단계/검색 필터
-  - 주문 상세: 현재 상태, 관련 알림, 최근 이벤트
-- **Events**
-  - 주문번호/이벤트타입/오류만 보기 등 필터
-- **Alerts**
-  - 상태(OPEN/ACK/RESOLVED/RETRY_REQUESTED) / 종류(EVENT/HOLD) 필터
-  - 운영 액션: ACK / RESOLVE / RETRY
-
----
-
-## 주요 데이터(테이블) 개요
-
-> 실제 컬럼은 `init_sql/` 및 `backend/app/sql/`을 기준으로 확인하세요.
-
-- `orders_raw` : Kafka 수신 원본(JSON) 저장 (복구/추적용)
-- `orders` : 주문 도메인 테이블 (current_status, hold_reason_code 등)
-- `events` : 주문 이벤트 로그 (event_type, occurred_at 등)
-- `alerts` : 운영 알림(OPEN/ACK/RESOLVED/RETRY 등)
-- `metrics_window` : 30분 롤업 집계 저장소 (대시보드 차트/KPI용)
-
----
-
-## API 개요
-
-> UI는 HTML 템플릿 + JS(fetch)로 아래 API들을 호출하는 형태입니다.
-
-### 페이지
-- `/` : Dashboard
-- `/orders` : 주문 목록
-- `/orders/{id}` : 주문 상세
-- `/events` : 이벤트 목록
-- `/alerts` : 알림 목록
 
 ---
 
@@ -222,6 +108,119 @@ APP_TZ=Asia/Seoul
 └─ .gitignore
 ```
 
+---
+
+## 빠른 시작
+
+> 아래는 **Docker Compose 기준**입니다.
+
+### 1) 레포 클론
+```bash
+git clone https://github.com/kangminjong/fulfillment-pipeline.git
+cd fulfillment-pipeline
+```
+
+### 2) 환경변수 파일 준비
+```bash
+cp .env.example .env
+```
+
+### 3) 컨테이너 실행
+```bash
+docker compose up -d --build
+docker compose logs -f
+```
+
+### 4) 접속
+- 대시보드(예시): `http://localhost:8000`  
+  ※ 실제 포트는 `docker-compose.yml` 포트 매핑을 기준으로 확인하세요.
+
+---
+
+## 아키텍처
+
+```mermaid
+flowchart LR
+  A["Producer\n(주문/이벤트 생성)"] --> B[(Kafka)]
+  B --> C["Consumer\n(검증·이상탐지)"]
+  C -->|정상| D["PostgreSQL\norders, events"]
+  C -->|이상 발생| H["HOLD 처리\nhold_reason_code 저장"]
+  C --> S["Slack 알림"]
+  D --> R["metrics_worker\n30분 롤업 집계"]
+  R --> MW["PostgreSQL\nmetrics_window"]
+  MW --> W["FastAPI Web/API"]
+  D --> W
+  W --> UI["Dashboard\n(HTML/CSS/JS)"]
+```
+
+---
+
+## 대시보드 화면
+
+- **Dashboard**
+  - KPI(주문/이벤트/알림/지연) 요약
+  - 시계열 차트(12h/24h/7d/30d 프리셋)
+  - 최근 주문/최근 알림 테이블
+- **Orders**
+  - 상태/단계/검색 필터
+  - 주문 상세: 현재 상태, 관련 알림, 최근 이벤트
+- **Events**
+  - 주문번호/이벤트타입/오류만 보기 등 필터
+- **Alerts**
+  - 상태(OPEN/ACK/RESOLVED/RETRY_REQUESTED) / 종류(EVENT/HOLD) 필터
+  - 운영 액션: ACK / RESOLVE / RETRY
+
+---
+
+## 주요 데이터(테이블) 개요
+
+> 실제 컬럼은 `init_sql/` 및 `backend/app/sql/`을 기준으로 확인하세요.
+
+- `orders_raw` : Kafka 수신 원본(JSON) 저장 (복구/추적용)
+- `orders` : 주문 도메인 테이블 (current_status, hold_reason_code 등)
+- `events` : 주문 이벤트 로그 (event_type, occurred_at 등)
+- `alerts` : 운영 알림(OPEN/ACK/RESOLVED/RETRY 등)
+- `metrics_window` : 30분 롤업 집계 저장소 (대시보드 차트/KPI용)
+
+---
+
+## API 개요
+
+> UI는 HTML 템플릿 + JS(fetch)로 아래 API들을 호출하는 형태입니다.
+
+### 페이지
+- `/` : Dashboard
+- `/orders` : 주문 목록
+- `/orders/{id}` : 주문 상세
+- `/events` : 이벤트 목록
+- `/alerts` : 알림 목록
+
+---
+
+## 환경변수(.env)
+
+`.env.example`를 복사해서 `.env`를 만들고 값만 채우면 됩니다.
+
+예시(프로젝트 설정에 맞게 조정):
+```dotenv
+# PostgreSQL
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=fulfillment
+DB_USER=user
+DB_PASSWORD=user
+
+# Kafka
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+KAFKA_TOPIC=event
+KAFKA_GROUP_ID=risk-management-group
+
+# Slack
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXXX/XXXX/XXXX
+
+# App
+APP_TZ=Asia/Seoul
+```
 ---
 
 ## 트러블슈팅
